@@ -27,6 +27,7 @@
                      ref="dt"
                      v-model:selection="selected_chaps"
                      @rowReorder="reorder($event)"
+                     @sort="sort($event)"
                      selectionMode="multiple"
                      :metaKeySelection="false"
                      scrollable scrollHeight="40vh"
@@ -96,7 +97,7 @@
 import TabPanel from "primevue/tabpanel";
 import TabView from "primevue/tabview";
 import ProgressBar from 'primevue/progressbar';
-import DataTable from "primevue/datatable";
+import DataTable, { DataTableSortEvent } from "primevue/datatable";
 import Column from "primevue/column";
 
 import {onMounted, Ref, ref} from "vue";
@@ -151,6 +152,21 @@ const parse_progress = ref<number>(0)
 function reorder(reordered_chaps: Ref<Chapter[]>) {
   chaps.value = reordered_chaps.value
 }
+
+function sort(event:DataTableSortEvent) {
+  // This is a workaround for the fact that DataTable does not support row reordering
+  // when sorting is enabled. We will just reorder the chapters manually.
+  const field = event.sortField as keyof Chapter;
+  const order = event.sortOrder;
+  if ( (order === 0) || (order === null) || (order === undefined)) return; // No sorting needed
+  chaps.value.sort((a:Chapter, b:Chapter) => {
+    if (a[field] < b[field]) return -order;
+    if (a[field] > b[field]) return order;
+    return 0;
+  });
+  console.log(chaps.value);
+}
+
 
 function export_csv() {
   dt.value.exportCSV()
