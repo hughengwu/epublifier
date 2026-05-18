@@ -10,9 +10,10 @@ Check out the [wiki](https://github.com/maoserr/epublifier/wiki) for usage.
 Currently supporting following sites:
 1. Novel Update
 2. Wuxia World
-3. Most sites from [awesome-read-the-docs](https://github.com/readthedocs-examples/awesome-read-the-docs)
-4. Custom sites with UL/OL elements as table of content, or regex on Link text, or use query selector
-5. Custom web app with predefined Title (header) element and Next button (clickable)
+3. [69书吧 (69shuba.com)](https://www.69shuba.com) - Chinese web novel site (GBK encoding supported)
+4. Most sites from [awesome-read-the-docs](https://github.com/readthedocs-examples/awesome-read-the-docs)
+5. Custom sites with UL/OL elements as table of content, or regex on Link text, or use query selector
+6. Custom web app with predefined Title (header) element and Next button (clickable)
 
 ## Installation ##
   - Firefox: https://addons.mozilla.org/en-US/firefox/addon/epublifier/
