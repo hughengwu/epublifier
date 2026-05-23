@@ -31,6 +31,7 @@
                      selectionMode="multiple"
                      :metaKeySelection="false"
                      scrollable scrollHeight="40vh"
+                     :virtualScrollerOptions="{ itemSize: 37 }"
                      class="p-datatable-sm mb-2"
                      responsiveLayout="scroll">
             <Column :rowReorder="true" headerStyle="width: 2rem" :reorderableColumn="false"/>
