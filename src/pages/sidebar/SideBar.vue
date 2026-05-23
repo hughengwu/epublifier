@@ -254,6 +254,31 @@ async function load() {
   write_info("Loaded cache")
 }
 
+async function fetch_69shuba_cover(pageUrl: string) {
+  try {
+    const u = new URL(pageUrl)
+    const segs = u.pathname.split('/')
+    // Only run on chapter list pages (/book/XXXXX/ or /book/XXXXX), not detail pages (.htm)
+    if (u.hostname !== 'www.69shuba.com' || segs[1] !== 'book') return
+    if (!segs[2] || segs[2].includes('.htm')) return
+    const detailUrl = `${u.origin}/book/${segs[2]}.htm`
+    const res = await fetch(detailUrl)
+    const buf = await res.arrayBuffer()
+    const snippet = new TextDecoder('utf-8', {fatal: false}).decode(buf.slice(0, 1024))
+    const cs = snippet.match(/charset[=\s"]+([^"'>\s;]+)/i)?.[1]?.toLowerCase() || 'gbk'
+    const html = new TextDecoder(cs).decode(buf)
+    const dom = new DOMParser().parseFromString(html, 'text/html')
+    const coverEl = dom.querySelector('.pic img, .bookimg img') as HTMLImageElement | null
+    if (coverEl) {
+      const src = coverEl.getAttribute('src') || ''
+      meta.value.cover = src.startsWith('http') ? src
+        : u.origin + (src.startsWith('/') ? '' : '/') + src
+    }
+  } catch (e) {
+    console.warn('69shuba: cover fetch failed', e)
+  }
+}
+
 onMounted(async () => {
   init_sidebarwin()
 
@@ -281,6 +306,10 @@ onMounted(async () => {
           )
           await parse_man.run_init_parser(
               doc_info.data!.url, doc_info.data!.src, curr_parse_doc.value)
+
+          if (!meta.value.cover) {
+            await fetch_69shuba_cover(doc_info.data!.url)
+          }
         } catch (e) {
           if (typeof e === "string") {
             write_info(e)
