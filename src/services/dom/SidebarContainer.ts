@@ -5,6 +5,19 @@ import {MsgCommand, MsgOut, MsgOutStatus} from "../messaging/msg_types";
 import SelectorWin from "./behaviors/SelectorWin";
 import {finder} from '@medv/finder'
 
+// Fast path: use id if available; otherwise limit finder search to the
+// nearest ancestor that has an id, which is unique in the document.
+function fast_finder(el: HTMLElement): string {
+  if (el.id) {
+    return '#' + CSS.escape(el.id)
+  }
+  const anchor = el.parentElement?.closest('[id]') as HTMLElement | null
+  if (anchor && anchor !== document.body) {
+    return '#' + CSS.escape(anchor.id) + ' ' + finder(el, {root: anchor})
+  }
+  return finder(el)
+}
+
 /**
  * Gets origin from window location bar
  */
@@ -85,7 +98,7 @@ export default class SidebarContainer {
               }
             )
             if (next_res != undefined) {
-              const sel_next = finder(next_res)
+              const sel_next = fast_finder(next_res)
               return msg_ok<string>("Got next", sel_next)
             } else {
               return msg_ok<string>("No next element selected", "")
@@ -98,7 +111,7 @@ export default class SidebarContainer {
               }
             )
             if (title_res != undefined) {
-              const sel_title = finder(title_res)
+              const sel_title = fast_finder(title_res)
               console.log(title_res)
               return msg_ok<string>("Got title", sel_title)
             } else {
@@ -130,7 +143,7 @@ export default class SidebarContainer {
               }
             )
             if (user_res != undefined){
-              return msg_ok<string>("Got user selector", finder(user_res))
+              return msg_ok<string>("Got user selector", fast_finder(user_res))
             } else {
               return msg_ok<string>("No user selector", "")
             }

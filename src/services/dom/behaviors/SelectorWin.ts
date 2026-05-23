@@ -5,6 +5,9 @@ export default class SelectorWin {
   private old_style: string
   private curr_filt_func?: (x: HTMLElement) => any
   private promise?: { resolve: Function, reject: Function }
+  private raf_id: number | null = null
+  private last_x = 0
+  private last_y = 0
 
   evt_get_move = this.get_move.bind(this)
   evt_stop_get = this.stop_get.bind(this)
@@ -46,29 +49,36 @@ export default class SelectorWin {
   }
 
   get_move(e: TouchEvent | MouseEvent) {
-    let x,y
-    if (e instanceof TouchEvent){
-      x = e.touches[0].clientX
-      y = e.touches[0].clientY
+    if (e instanceof TouchEvent) {
+      this.last_x = e.touches[0].clientX
+      this.last_y = e.touches[0].clientY
     } else {
-      x = e.clientX
-      y = e.clientY
+      this.last_x = e.clientX
+      this.last_y = e.clientY
     }
-    const candidate_els: Element[] = this.doc.elementsFromPoint(x, y)
-      .filter(x => x != this.overlay)
-    const filt_candidates = (candidate_els as HTMLElement[])
-      .filter(this.curr_filt_func!)
-    if (filt_candidates.length > 0) {
-      if (this.curr_candidate != undefined) {
-        this.curr_candidate.style.border = this.old_style
+    if (this.raf_id !== null) return
+    this.raf_id = requestAnimationFrame(() => {
+      this.raf_id = null
+      const candidate_els: Element[] = this.doc.elementsFromPoint(this.last_x, this.last_y)
+        .filter(x => x != this.overlay)
+      const filt_candidates = (candidate_els as HTMLElement[])
+        .filter(this.curr_filt_func!)
+      if (filt_candidates.length > 0) {
+        if (this.curr_candidate != undefined) {
+          this.curr_candidate.style.border = this.old_style
+        }
+        this.curr_candidate = filt_candidates[0]
+        this.old_style = this.curr_candidate.style.border
+        this.curr_candidate.style.border = "3px solid red"
       }
-      this.curr_candidate = filt_candidates[0]
-      this.old_style = this.curr_candidate.style.border
-      this.curr_candidate.style.border = "3px solid red"
-    }
+    })
   }
 
   stop_get(e: TouchEvent | MouseEvent) {
+    if (this.raf_id !== null) {
+      cancelAnimationFrame(this.raf_id)
+      this.raf_id = null
+    }
     if (this.overlay) {
       this.overlay.remove()
     }
