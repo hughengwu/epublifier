@@ -23,6 +23,17 @@
                        @epub="gen_epub" @delete="delete_chap"
                        @cache="cache" @load="load"
                        @export_csv="export_csv" @import_csv="import_csv"/>
+          <div class="flex align-items-center gap-2 mb-1">
+            <span class="text-sm">选择第</span>
+            <InputNumber v-model="range_from" :min="1" :max="chaps.length || 1"
+                         inputStyle="width:3.5rem" size="small" :useGrouping="false"/>
+            <span class="text-sm">到第</span>
+            <InputNumber v-model="range_to" :min="1" :max="chaps.length || 1"
+                         inputStyle="width:3.5rem" size="small" :useGrouping="false"/>
+            <span class="text-sm">章</span>
+            <Button label="选择" icon="pi pi-check-square" size="small"
+                    :disabled="chaps.length === 0" @click="select_range"/>
+          </div>
           <DataTable :value="chaps"
                      ref="dt"
                      v-model:selection="selected_chaps"
@@ -41,7 +52,9 @@
                 <i class="pi" :class="(!(data as any).html_parsed)?'pi-circle':'pi-check'"></i>
               </template>
             </Column>
-            <Column field="id" header="#" sortable></Column>
+            <Column header="#" sortable sortField="id">
+              <template #body="{data}:any">{{ (data as any).id + 1 }}</template>
+            </Column>
             <Column field="title" header="Title" sortable></Column>
             <Column field="url" header="URL" sortable></Column>
           </DataTable>
@@ -139,6 +152,8 @@ import LinksParse from "./parserconfig/LinksParse.vue";
 import NextParse from "./parserconfig/AddPageParse.vue";
 import TextParse from "./parserconfig/TextParse.vue";
 import InputText from "primevue/inputtext";
+import InputNumber from "primevue/inputnumber";
+import Button from "primevue/button";
 import OptionsManager from "../../services/common/OptionsMan";
 
 
@@ -242,6 +257,17 @@ function delete_chap() {
   selected_chaps.value = [];
 }
 
+const range_from = ref<number>(1)
+const range_to = ref<number>(1)
+
+function select_range() {
+  const total = chaps.value.length
+  if (total === 0) return
+  const from = Math.max(1, range_from.value ?? 1)
+  const to = Math.min(total, range_to.value ?? total)
+  selected_chaps.value = chaps.value.slice(from - 1, to)
+}
+
 async function cache() {
   await OptionsManager.Instance.cache_state(chaps.value, meta.value)
   write_info("Cached chapters & meta data")
@@ -262,20 +288,37 @@ async function fetch_69shuba_cover(pageUrl: string) {
     if (u.hostname !== 'www.69shuba.com' || segs[1] !== 'book') return
     if (!segs[2] || segs[2].includes('.htm')) return
     const detailUrl = `${u.origin}/book/${segs[2]}.htm`
-    const res = await fetch(detailUrl)
+    console.log('[69shuba cover] fetching', detailUrl)
+    const res = await fetch(detailUrl, {
+      credentials: 'include',
+      headers: {'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'}
+    })
+    console.log('[69shuba cover] HTTP', res.status, res.url)
+    if (!res.ok) return
     const buf = await res.arrayBuffer()
     const snippet = new TextDecoder('utf-8', {fatal: false}).decode(buf.slice(0, 1024))
-    const cs = snippet.match(/charset[=\s"]+([^"'>\s;]+)/i)?.[1]?.toLowerCase() || 'gbk'
+    const cs = snippet.match(/charset[=\s"']+([^"'>\s;]+)/i)?.[1]?.toLowerCase() || 'gbk'
+    console.log('[69shuba cover] charset detected:', cs)
     const html = new TextDecoder(cs).decode(buf)
     const dom = new DOMParser().parseFromString(html, 'text/html')
-    const coverEl = dom.querySelector('.pic img, .bookimg img') as HTMLImageElement | null
-    if (coverEl) {
-      const src = coverEl.getAttribute('src') || ''
+    // Try src and data-src (lazy loading); also og:image as last resort
+    const coverEl = dom.querySelector('.pic img, .bookimg img, .book-img img, .cover img') as HTMLImageElement | null
+    console.log('[69shuba cover] coverEl:', coverEl?.outerHTML ?? 'not found')
+    let src = coverEl?.getAttribute('data-src') || coverEl?.getAttribute('src') || ''
+    if (!src) {
+      src = dom.querySelector('meta[property="og:image"]')?.getAttribute('content') || ''
+      console.log('[69shuba cover] og:image fallback:', src)
+    }
+    if (src) {
       meta.value.cover = src.startsWith('http') ? src
         : u.origin + (src.startsWith('/') ? '' : '/') + src
+      write_info('封面已获取')
+      console.log('[69shuba cover] set cover:', meta.value.cover)
+    } else {
+      console.warn('[69shuba cover] no img found; dumping head HTML:', dom.head.innerHTML.slice(0, 500))
     }
   } catch (e) {
-    console.warn('69shuba: cover fetch failed', e)
+    console.warn('[69shuba cover] fetch failed:', e)
   }
 }
 
