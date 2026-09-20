@@ -147,6 +147,23 @@ export default class SidebarContainer {
             } else {
               return msg_ok<string>("No user selector", "")
             }
+          case MsgCommand.ContFetch: {
+            // Fetch from the page itself so the request looks like normal
+            // same-site browsing (own Referer/cookies/Sec-Fetch headers)
+            const res = await fetch(data['url'], {credentials: 'same-origin'})
+            const bytes = new Uint8Array(await res.arrayBuffer())
+            let bin = ''
+            for (let i = 0; i < bytes.length; i += 0x8000) {
+              bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+            }
+            return msg_ok<any>("Fetched", {
+              status: res.status,
+              url: res.url,
+              content_type: res.headers.get('content-type'),
+              cf_mitigated: res.headers.get('cf-mitigated'),
+              body_b64: btoa(bin)
+            })
+          }
           case MsgCommand.ContClickNext:
             const next_sel = data['selector']
             const el = document.querySelector(next_sel)

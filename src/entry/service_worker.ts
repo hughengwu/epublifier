@@ -12,6 +12,8 @@ function set_badge() {
     id: 1,
     condition: {
       initiatorDomains: [browser.runtime.id],
+      // Only sspai needs this Referer; forcing it on other sites looks like bot traffic
+      requestDomains: ['sspai.com'],
       resourceTypes: ['xmlhttprequest', 'image'],
     },
     action: {
