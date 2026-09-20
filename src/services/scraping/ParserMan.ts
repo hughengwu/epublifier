@@ -24,6 +24,14 @@ import {
 } from "../../pages/parser_state";
 import {chaps, meta} from "../../pages/novel_state";
 import {write_info} from "../../pages/sidebar/sidebar_utils";
+import browser from "webextension-polyfill";
+
+// Max times a single chapter will wait for the user to clear a Cloudflare challenge
+const CF_MAX_CLEARS = 3
+// How often to re-check whether the challenge has been cleared
+const CF_POLL_MS = 4000
+// Give up waiting for the user after this long
+const CF_WAIT_LIMIT_MS = 10 * 60 * 1000
 
 
 export default class ParserManager {
@@ -31,6 +39,8 @@ export default class ParserManager {
   private options: OptionsManager
   private sandbox: SandboxInput
   private parsers: Record<string, ParserLoadResult> = {}
+  // Shared by all download workers so only one challenge tab is opened at a time
+  private cf_gate: Promise<boolean> | null = null
 
   constructor(sandbox: SandboxInput) {
     this.options = OptionsManager.Instance
@@ -268,6 +278,70 @@ export default class ParserManager {
     return 'utf-8'
   }
 
+  /**
+   * Detects a Cloudflare challenge / block page ("Just a moment...")
+   */
+  is_cf_challenge(res: Response, raw: ArrayBuffer): boolean {
+    if (res.headers.get('cf-mitigated') === 'challenge') return true
+    const head = new TextDecoder('utf-8').decode(raw.slice(0, 4096))
+    if (/<title>\s*(just a moment|attention required)/i.test(head)) return true
+    return [403, 429, 503].includes(res.status)
+      && /cf-chl|challenge-platform|cf-browser-verification/i.test(head)
+  }
+
+  /**
+   * Fetches a page with the browser's cookies (so a cleared Cloudflare
+   * cf_clearance cookie is sent along).
+   */
+  private async fetch_page(url: string): Promise<{ res: Response, raw: ArrayBuffer }> {
+    const res = await fetch(url, {credentials: 'include'})
+    return {res, raw: await res.arrayBuffer()}
+  }
+
+  /**
+   * Pauses all downloads, opens the page in a browser tab so the user can pass
+   * the Cloudflare check, then polls until the page is reachable again.
+   * @returns true once cleared, false if cancelled / timed out
+   */
+  private wait_cf_clear(url: string, cancel: Ref<boolean>, status_cb: Function): Promise<boolean> {
+    if (this.cf_gate !== null) return this.cf_gate
+    const gate = (async () => {
+      let tab_id: number | undefined
+      try {
+        tab_id = await browser.runtime.sendMessage({cmd: "open_tab", url})
+      } catch (e) {
+        console.warn("Unable to open verification tab", e)
+      }
+      status_cb("Cloudflare 拦截：请在新打开的标签页中完成验证，完成后将自动继续 "
+        + "(Blocked by Cloudflare, please complete the check in the opened tab)")
+      const start = Date.now()
+      try {
+        while (!cancel.value && Date.now() - start < CF_WAIT_LIMIT_MS) {
+          await new Promise(f => setTimeout(f, CF_POLL_MS))
+          try {
+            const {res, raw} = await this.fetch_page(url)
+            if (res.ok && !this.is_cf_challenge(res, raw)) {
+              status_cb("Cloudflare check cleared, resuming")
+              return true
+            }
+          } catch (e) {
+            // Network hiccup, keep polling
+          }
+        }
+        return false
+      } finally {
+        if (tab_id !== undefined) {
+          browser.runtime.sendMessage({cmd: "close_tab", tab_id}).catch(() => {
+          })
+        }
+      }
+    })()
+    this.cf_gate = gate
+    gate.finally(() => {
+      this.cf_gate = null
+    })
+    return gate
+  }
 
   async fix_html(htmlRaw:ArrayBuffer,cs:string, url: string): Promise<string> {
     console.log(cs)
@@ -305,15 +379,28 @@ export default class ParserManager {
         throw new Error('User cancelled')
       }
       if (chaps_ref.value[id].url !== undefined) {
+        const chap_url = chaps_ref.value[id].url
         let f_res: Response
         let f_raw: ArrayBuffer
-        try {
-          f_res = await fetch(chaps_ref.value[id].url);
-          f_raw = await f_res.arrayBuffer();
-        } catch (e) {
-          status_cb("Can't download. Please check permissions in extension page "
-            + "-> permission -> Access your data for all websites")
-          return
+        let clears = 0
+        while (true) {
+          try {
+            ({res: f_res, raw: f_raw} = await parse_man.fetch_page(chap_url));
+          } catch (e) {
+            status_cb("Can't download. Please check permissions in extension page "
+              + "-> permission -> Access your data for all websites")
+            return
+          }
+          if (!parse_man.is_cf_challenge(f_res, f_raw)) break
+          if (cancel.value) {
+            throw new Error('User cancelled')
+          }
+          if (clears++ >= CF_MAX_CLEARS
+            || !await parse_man.wait_cf_clear(chap_url, cancel, status_cb)) {
+            status_cb("Chapter " + id + " blocked by Cloudflare, skipped. "
+              + "Re-select it and parse again after passing the check.")
+            return
+          }
         }
         const chars = parse_man.getCharset(f_raw,f_res.headers)
         const fixed_html = await parse_man.fix_html(f_raw,chars, f_res.url);

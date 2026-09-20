@@ -52,6 +52,14 @@ async function msg_proc(data: any) {
       });
       break;
     }
+    case "open_tab": {
+      const tab = await browser.tabs.create({url: data.url, active: true})
+      return tab.id
+    }
+    case "close_tab": {
+      await browser.tabs.remove(data.tab_id)
+      break;
+    }
     case "report": {
       const ext = browser.runtime.getManifest()
       const browser_name = ('browser_specific_settings' in ext) ? "Firefox" : "Chrome"
