@@ -15,6 +15,10 @@ const main_def = {
             func: nu_toc_parser,
             inputs: {}
         },
+        'cool18 Thread': {
+            func: cool18_thread_links,
+            inputs: {}
+        },
     },
     text: {
         'Readability': {
@@ -31,6 +35,10 @@ const main_def = {
         },
         '69shuba': {
             func: shuba69_chapter,
+            inputs: {}
+        },
+        'cool18 Thread Text': {
+            func: cool18_thread_text,
             inputs: {}
         }
     }
@@ -215,6 +223,27 @@ function main_parser(inputs, url, source, helpers) {
                 }
             }
             return {failed_message: '请在69书吧小说书籍页（/book/XXXXX.htm 或 /book/XXXXX/）运行。'}
+        case "www.cool18.com":
+            if (link.searchParams.get("act") === "threadview") {
+                let c18_title = ((dom.querySelector('h1.main-title')?.textContent ?? '').trim())
+                    || (dom.title || "No Title");
+                let c18_author = dom.querySelector('meta[name="author"]')?.content
+                    ?? dom.querySelector('.sender a')?.innerText ?? "N/A";
+                return {
+                    message: '检测到 cool18 论坛帖子，整帖作为单章解析。',
+                    meta: {
+                        title: c18_title,
+                        description: dom.querySelector('meta[name="description"]')?.content,
+                        author: c18_author,
+                        publisher: "cool18"
+                    },
+                    parser_opt: {
+                        type: 'links', parser: 'cool18 Thread',
+                        chap_parser: 'cool18 Thread Text'
+                    }
+                }
+            }
+            return {failed_message: '请在 cool18 论坛帖子页（act=threadview）运行。'}
     }
     if (dom.querySelector('.md-nav--primary>.md-nav__list>.md-nav__item--active > .md-nav')) {
         return {
@@ -396,6 +425,102 @@ function shuba69_chapter(inputs, url, source, helpers) {
         title: title,
         html: '<div>' + html + '</div>',
         message: '已解析69书吧章节'
+    };
+}
+
+/**
+ * cool18 forum thread: treat the whole thread as a single chapter.
+ * @param inputs Inputs
+ * @param url Thread URL
+ * @param source Source text
+ * @param helpers Help functions
+ * @returns {{chaps: *[], message: string}}
+ */
+function cool18_thread_links(inputs, url, source, helpers) {
+    let parser = new DOMParser();
+    let dom = parser.parseFromString(source, "text/html");
+    let title = ((dom.querySelector('h1.main-title')?.textContent ?? '').trim())
+        || (dom.title || "cool18 thread");
+    let chaps = [{
+        id: 0,
+        url: url,
+        title: title
+    }];
+    return {
+        chaps: chaps,
+        message: 'cool18 帖子解析为单章 (' + chaps.length + ')'
+    };
+}
+
+/**
+ * cool18 forum thread: extract the post body from the #content-section
+ * <pre> block and turn it into clean <p> paragraphs. Newlines and
+ * <p>/<br> tags act as paragraph breaks; inline <a>/<img> are kept.
+ * @param inputs Inputs
+ * @param url Thread URL
+ * @param source Source text
+ * @param helpers Help functions
+ * @returns {{title: string, html: string, message: string}}
+ */
+function cool18_thread_text(inputs, url, source, helpers) {
+    let parser = new DOMParser();
+    let dom = parser.parseFromString(source, "text/html");
+    let title = ((dom.querySelector('h1.main-title')?.textContent ?? '').trim())
+        || (dom.title || "cool18 thread");
+    let pre = dom.querySelector('#content-section pre')
+        ?? dom.querySelector('.post-content .content-section pre')
+        ?? dom.querySelector('.post-content pre')
+        ?? dom.querySelector('pre');
+    if (pre == null) {
+        return {
+            title: title,
+            html: '<p>(未找到正文)</p>',
+            message: 'cool18: 未找到正文区域。'
+        };
+    }
+    let paras = [];
+    let cur = [];
+    let flush = () => {
+        let line = cur.join('').replace(/\u00a0/g, ' ').trim();
+        if (line !== '') paras.push(line);
+        cur = [];
+    };
+    let walk = (node) => {
+        if (node.nodeType === 3) { // #text
+            let segs = node.nodeValue.split(/\r?\n/);
+            for (let i = 0; i < segs.length; i++) {
+                if (i > 0) flush();
+                cur.push(segs[i]);
+            }
+        } else if (node.nodeType === 1) { // element
+            let tag = node.tagName.toLowerCase();
+            if (tag === 'br') {
+                flush();
+            } else if (tag === 'p' || tag === 'div') {
+                flush();
+                node.childNodes.forEach(walk);
+            } else if (tag === 'a') {
+                cur.push(node.outerHTML);
+            } else if (tag === 'img') {
+                let el = node.cloneNode(false);
+                let s = el.getAttribute('src');
+                if (s) {
+                    try { el.setAttribute('src', new URL(s, url).href); }
+                    catch (e) { /* keep as-is */ }
+                }
+                cur.push(el.outerHTML);
+            } else {
+                node.childNodes.forEach(walk);
+            }
+        }
+    };
+    pre.childNodes.forEach(walk);
+    flush();
+    let html = paras.map(s => '<p>' + s + '</p>').join('\n');
+    return {
+        title: title,
+        html: html,
+        message: '已解析 cool18 帖子 (' + paras.length + ' 段)'
     };
 }
 
