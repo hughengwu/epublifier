@@ -230,7 +230,7 @@ function main_parser(inputs, url, source, helpers) {
                 let c18_author = dom.querySelector('meta[name="author"]')?.content
                     ?? dom.querySelector('.sender a')?.innerText ?? "N/A";
                 return {
-                    message: '检测到 cool18 论坛帖子，整帖作为单章解析。',
+                    message: '检测到 cool18 论坛帖子，将抓取本帖及目录中链接的分帖。',
                     meta: {
                         title: c18_title,
                         description: dom.querySelector('meta[name="description"]')?.content,
@@ -429,7 +429,26 @@ function shuba69_chapter(inputs, url, source, helpers) {
 }
 
 /**
- * cool18 forum thread: treat the whole thread as a single chapter.
+ * Extracts a part number from a cool18 TOC link text, e.g.
+ * "【书名】（7-8）" -> 7. Full-width digits are normalized first.
+ * @param {string} text Link text
+ * @returns {number|undefined}
+ */
+function c18_part_num(text) {
+    // Normalize full-width digits to ASCII, then take the first digit run.
+    // TOC link texts look like "【书名】（7-8）" / "（20）", so the first
+    // number is the part number (ranges like 7-8 sort by their start).
+    let t = (text || '').replace(/[\uFF10-\uFF19]/g,
+        c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+    let m = t.match(/\d{1,4}/);
+    return m ? parseInt(m[0], 10) : undefined;
+}
+
+/**
+ * cool18 forum thread: the current thread plus every part thread linked in
+ * the post's TOC (threadview links inside the #content-section <pre>, only
+ * before the first 第X章/节/回 heading) become book chapters, ordered by
+ * part number ascending (unnumbered keep their original order, last).
  * @param inputs Inputs
  * @param url Thread URL
  * @param source Source text
@@ -441,14 +460,58 @@ function cool18_thread_links(inputs, url, source, helpers) {
     let dom = parser.parseFromString(source, "text/html");
     let title = ((dom.querySelector('h1.main-title')?.textContent ?? '').trim())
         || (dom.title || "cool18 thread");
-    let chaps = [{
-        id: 0,
-        url: url,
-        title: title
-    }];
+    let chaps = [{id: 0, url: url, title: title}];
+    let pre = dom.querySelector('#content-section pre')
+        ?? dom.querySelector('.post-content .content-section pre')
+        ?? dom.querySelector('.post-content pre')
+        ?? dom.querySelector('pre');
+    let self_tid = (url.match(/[?&]tid=(\d+)/) || [])[1];
+    let items = [];
+    if (pre) {
+        let seen = new Set();
+        let body_started = false;
+        let walk = (node) => {
+            if (node.nodeType === 3) { // #text
+                if (/^第[0-9一二三四五六七八九十百千两]+[章节回]/.test(
+                        (node.nodeValue || '').trim())) {
+                    body_started = true;
+                }
+            } else if (node.nodeType === 1) { // element
+                let tag = node.tagName.toLowerCase();
+                if (tag === 'a') {
+                    if (!body_started
+                        && (node.getAttribute('href') || '').includes('threadview')) {
+                        let tid = (node.href.match(/[?&]tid=(\d+)/) || [])[1];
+                        let t = (node.textContent || '').trim();
+                        if (tid && tid !== self_tid && !seen.has(tid)) {
+                            seen.add(tid);
+                            items.push({
+                                url: node.href,
+                                title: t || ('章节 ' + (items.length + 1)),
+                                num: c18_part_num(t)
+                            });
+                        }
+                    }
+                    return;
+                }
+                node.childNodes.forEach(walk);
+            }
+        };
+        pre.childNodes.forEach(walk);
+        items.sort((x, y) => {
+            let nx = x.num === undefined ? Infinity : x.num;
+            let ny = y.num === undefined ? Infinity : y.num;
+            if (nx !== ny) return nx - ny;
+            return 0;
+        });
+        for (let it of items) {
+            chaps.push({id: chaps.length, url: it.url, title: it.title});
+        }
+    }
     return {
         chaps: chaps,
-        message: 'cool18 帖子解析为单章 (' + chaps.length + ')'
+        message: 'cool18 帖子解析为 ' + chaps.length + ' 章'
+            + (items.length ? '（当前帖 + 目录分帖 ' + items.length + '）' : '（单帖）')
     };
 }
 
@@ -516,7 +579,26 @@ function cool18_thread_text(inputs, url, source, helpers) {
     };
     pre.childNodes.forEach(walk);
     flush();
-    let html = paras.map(s => '<p>' + s + '</p>').join('\n');
+    // The novel body starts at the first chapter heading (第X章/节/回/部分).
+    // Everything before it (per-post title / 作者 / 字数 / TOC links) is
+    // dropped so it is not repeated in every chapter of the book. When no
+    // heading is present, fall back to stripping leading header lines.
+    let bodyStart = paras.findIndex(p =>
+        /^\s*第[0-9一二三四五六七八九十百千两]+(?:\s*[-–—~～\uFF0D－]\s*[0-9一二三四五六七八九十百千两]+)?\s*[章节回部分]/.test(p));
+    let start;
+    if (bodyStart >= 0) {
+        start = bodyStart;
+    } else {
+        let is_header_para = (p) =>
+            (/^<a[\s>]/.test(p) && p.includes('threadview'))
+            || /^作者[：:]/.test(p)
+            || /^字数[：:]/.test(p)
+            || /^【[^】]+】.*[（(]\d{1,4}/.test(p);
+        start = 0;
+        while (start < paras.length && is_header_para(paras[start].trim())) start++;
+        if (start === paras.length) start = 0; // all looked like header: keep as-is
+    }
+    let html = paras.slice(start).map(s => '<p>' + s + '</p>').join('\n');
     return {
         title: title,
         html: html,
