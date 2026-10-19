@@ -429,26 +429,41 @@ function shuba69_chapter(inputs, url, source, helpers) {
 }
 
 /**
- * Extracts a part number from a cool18 TOC link text, e.g.
- * "【书名】（7-8）" -> 7. Full-width digits are normalized first.
+ * Builds a sort key from a cool18 TOC link text, e.g.
+ * "【书名】（7-8）" -> {num: 7, extra: 0, part: 0}
+ * "【书名】（5上）" -> {num: 5, extra: 0, part: 0}
+ * "【书名】（5下）" -> {num: 5, extra: 0, part: 2}
+ * "【书名】（番外篇 20-21）" -> {num: 20, extra: 1, part: 0}
+ * Full-width digits are normalized first. Numbers inside （…）/（…）
+ * are preferred (so "第三卷（108）" sorts by 108, not 3); ranges like
+ * "7-8" sort by their start. extra (番外/外传) sorts after the main
+ * story; part orders 上 < 中 < 下 within the same number.
  * @param {string} text Link text
- * @returns {number|undefined}
+ * @returns {{num: number, extra: number, part: number}}
  */
-function c18_part_num(text) {
-    // Normalize full-width digits to ASCII, then take the first digit run.
-    // TOC link texts look like "【书名】（7-8）" / "（20）", so the first
-    // number is the part number (ranges like 7-8 sort by their start).
+function c18_part_key(text) {
     let t = (text || '').replace(/[\uFF10-\uFF19]/g,
         c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
-    let m = t.match(/\d{1,4}/);
-    return m ? parseInt(m[0], 10) : undefined;
+    let bm = t.match(/[（(]([^（）()]*\d[^（）()]*)[）)]/);
+    let scope = bm ? bm[1] : t;
+    let num = Infinity;
+    let nm = scope.match(/\d{1,4}(?:\s*[-–—~～\uFF0D]\s*\d{1,4})?/);
+    if (nm) num = parseInt(nm[0], 10);
+    return {
+        num: num,
+        extra: /番外|外传/.test(t) ? 1 : 0,
+        part: /下/.test(scope) ? 2 : (/中/.test(scope) ? 1 : 0)
+    };
 }
 
 /**
  * cool18 forum thread: the current thread plus every part thread linked in
  * the post's TOC (threadview links inside the #content-section <pre>, only
  * before the first 第X章/节/回 heading) become book chapters, ordered by
- * part number ascending (unnumbered keep their original order, last).
+ * part number ascending: main story first, then 番外/外传, unnumbered
+ * links keep their original order last; 上 < 中 < 下 within the same
+ * number. TOC links are often listed newest-first (descending) or jumbled
+ * (番外 interleaved with the main story), hence the key-based sort.
  * @param inputs Inputs
  * @param url Thread URL
  * @param source Source text
@@ -488,7 +503,7 @@ function cool18_thread_links(inputs, url, source, helpers) {
                             items.push({
                                 url: node.href,
                                 title: t || ('章节 ' + (items.length + 1)),
-                                num: c18_part_num(t)
+                                k: c18_part_key(t)
                             });
                         }
                     }
@@ -498,12 +513,10 @@ function cool18_thread_links(inputs, url, source, helpers) {
             }
         };
         pre.childNodes.forEach(walk);
-        items.sort((x, y) => {
-            let nx = x.num === undefined ? Infinity : x.num;
-            let ny = y.num === undefined ? Infinity : y.num;
-            if (nx !== ny) return nx - ny;
-            return 0;
-        });
+        items.sort((x, y) =>
+            (x.k.extra - y.k.extra)
+            || (x.k.num - y.k.num)
+            || (x.k.part - y.k.part));
         for (let it of items) {
             chaps.push({id: chaps.length, url: it.url, title: it.title});
         }
